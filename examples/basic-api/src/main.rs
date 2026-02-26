@@ -2,15 +2,22 @@ use rust_api::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod controllers;
+mod models;
 mod services;
 
 use controllers::{
-    admin_controller::AdminController, echo_controller::EchoController,
-    health_controller::HealthController, metrics_controller::MetricsController,
+    admin_controller::AdminController,
+    echo_controller::EchoController,
+    health_controller::HealthController,
+    metrics_controller::MetricsController,
+    user_controller::UserController,
 };
 use services::{
-    admin_service::AdminService, echo_service::EchoService, health_service::HealthService,
+    admin_service::AdminService,
+    echo_service::EchoService,
+    health_service::HealthService,
     metrics_service::MetricsService,
+    user_service::UserService,
 };
 
 /// GET / — stateless root endpoint, mounted directly on the pipeline.
@@ -60,6 +67,7 @@ async fn main() {
     let echo_svc = Arc::new(EchoService::new());
     let metrics_svc = Arc::new(MetricsService::new());
     let admin_svc = Arc::new(AdminService::new());
+    let user_svc = Arc::new(UserService::new());
 
     // Read the bearer token once at startup.
     // unwrap_or_default so construction never panics — mount_guarded is the gate.
@@ -71,6 +79,7 @@ async fn main() {
         .group("/api/v1", |g| g
             .mount::<HealthController>(health_svc)
             .mount::<EchoController>(echo_svc)
+            .mount::<UserController>(user_svc)
         )
         // mount_if: metrics wired only when ENABLE_METRICS is set.
         // When false the pipeline passes through unchanged — no error, no routes.

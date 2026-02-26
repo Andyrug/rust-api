@@ -51,8 +51,12 @@ pub mod di;
 pub mod error;
 pub mod middleware;
 pub mod pipeline;
+pub mod repository;
+pub mod id;
 pub mod router;
 pub mod server;
+pub mod validation;
+pub mod validators;
 
 // Re-export core types
 pub use app::App;
@@ -62,6 +66,8 @@ pub use error::{Error, Result};
 pub use middleware::{guard, require_bearer};
 pub use pipeline::{RouterPipeline, RouterTransform};
 pub use router::{method_filter_from_str, ApiRoute, Router, RouterExt};
+pub use id::Id;
+pub use repository::{Filter, HasId, InMemoryRepository, QuerySpec, Repository, TypedFilter};
 pub use server::RustAPI;
 
 // Re-export routing methods from Axum (available for advanced use)
@@ -80,7 +86,17 @@ pub use axum::{
     Json,
 };
 // Re-export macros
-pub use rust_api_macros::{delete, get, patch, post, put};
+pub use rust_api_macros::{delete, get, patch, post, put, NewType, Validatable};
+// Re-export validation primitives (trait shares the name with the derive macro —
+// Rust resolves correctly: `impl Validatable` uses the trait, `#[derive(Validatable)]`
+// uses the proc macro — they live in different namespaces)
+pub use validation::{FieldError, HandlerResult, IntoValidated, ValidatedJson, ValidatedQuery, ValidationRejection, ValidationResult, Validatable};
+// Re-export all stdlib validator functions
+pub use validators::{
+    validate_ca_postal, validate_custom, validate_email, validate_matches, validate_max_length,
+    validate_min_length, validate_non_empty, validate_phone_e164, validate_range, validate_url,
+    validate_us_zip, validate_uuid,
+};
 // Re-export serde for user convenience
 pub use serde::{Deserialize, Serialize};
 pub use std::sync::Arc;
@@ -207,7 +223,12 @@ pub mod prelude {
         // Axum — all surface types needed to write handlers and custom extractors.
         // Clients must never add `axum` as a direct dependency.
         FromRequestParts,
+        // Validation — applicative, accumulating, one primitive everywhere.
+        FieldError,
         IntoResponse,
+        // IntoValidated from frunk: used in manual `impl Validatable` to compose
+        // independent checks with `.into_validated() + ...` then `.into_result()`.
+        IntoValidated,
         Json,
         Parts,
         Path,
@@ -216,6 +237,14 @@ pub mod prelude {
         Result,
         Router,
         RouterExt,
+        // Identity — phantom-typed UUID wrapper
+        Id,
+        // Data access
+        Filter,
+        HasId,
+        InMemoryRepository,
+        QuerySpec,
+        Repository,
         // Pipeline
         RouterPipeline,
         RouterTransform,
@@ -225,5 +254,32 @@ pub mod prelude {
         State,
         StatusCode,
         TraceLayer,
+        // Validatable: both the derive macro and the trait share this name.
+        // `#[derive(Validatable)]` — proc macro (different namespace, no conflict)
+        // `impl Validatable for T` — the trait
+        Validatable,
+        // NewType: smart-constructor derive for single-field tuple structs.
+        NewType,
+        ValidatedJson,
+        ValidatedQuery,
+        HandlerResult,
+        ValidationRejection,
+        // ValidationResult<T> = std::result::Result<T, Vec<FieldError>>
+        // Use this in manual `impl Validatable` blocks to avoid the prelude
+        // Result alias clash.
+        ValidationResult,
+        // Stdlib validators
+        validate_ca_postal,
+        validate_custom,
+        validate_email,
+        validate_matches,
+        validate_max_length,
+        validate_min_length,
+        validate_non_empty,
+        validate_phone_e164,
+        validate_range,
+        validate_url,
+        validate_us_zip,
+        validate_uuid,
     };
 }

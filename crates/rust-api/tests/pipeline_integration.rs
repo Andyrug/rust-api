@@ -338,3 +338,106 @@ async fn group_auth_scoped_to_group_only() {
         "admin route should succeed with correct token"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tests — applicative validation (ValidatedJson)
+// ---------------------------------------------------------------------------
+
+/// Minimal service + controller wired with ValidatedJson for the tests below.
+struct ItemService;
+
+impl ItemService {
+    fn new() -> Self {
+        Self
+    }
+    fn name(&self, n: &str) -> String {
+        format!("created: {n}")
+    }
+}
+
+#[derive(Serialize, Deserialize, Validatable)]
+struct CreateItemRequest {
+    #[validate(min_length = 3)]
+    #[validate(max_length = 20)]
+    pub name: String,
+    #[validate(email)]
+    pub owner_email: String,
+}
+
+#[post("/items")]
+async fn create_item(
+    State(svc): State<Arc<ItemService>>,
+    ValidatedJson(req): ValidatedJson<CreateItemRequest>,
+) -> String {
+    svc.name(&req.name)
+}
+
+struct ItemController;
+mount_handlers!(ItemController, ItemService, [(__create_item_route, create_item)]);
+
+fn item_app() -> Router<()> {
+    RouterPipeline::new()
+        .mount::<ItemController>(Arc::new(ItemService::new()))
+        .build()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn valid_payload_returns_200() {
+    let resp = item_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/items")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"widget","owner_email":"a@b.com"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn invalid_payload_returns_422() {
+    let resp = item_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/items")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"ab","owner_email":"notanemail"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        422,
+        "invalid fields should return 422"
+    );
+}
+
+#[tokio::test]
+async fn all_errors_accumulated_not_short_circuited() {
+    let resp = item_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/items")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"ab","owner_email":"notanemail"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_string(resp.into_body()).await;
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let errors = parsed["errors"].as_array().unwrap();
+    assert!(
+        errors.len() >= 2,
+        "expected at least 2 accumulated errors, got {}: {}",
+        errors.len(),
+        body
+    );
+}

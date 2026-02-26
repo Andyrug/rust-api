@@ -1,173 +1,260 @@
 # RustAPI
 
-> **FastAPI-inspired REST framework for Rust**
+> **FastAPI-inspired REST framework for Rust — compositional, type-safe, compile-time guarantees**
 
-[![Crates.io](https://img.shields.io/crates/v/rust-api.svg)](https://crates.io/crates/rust-api)
-[![Documentation](https://docs.rs/rust-api/badge.svg)](https://docs.rs/rust-api)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Build Status](https://github.com/jrkosinski/rustapi/workflows/CI/badge.svg)](https://github.com/jrkosinski/rustapi/actions)
-[![Rust Version](https://img.shields.io/badge/rust-1.70%2B-blue.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
 
-**Motivation**: to make it as easy as possible to spin up a quick REST API in Rust with minimal plumbing code. 
+Spin up a REST API in Rust with the developer experience of FastAPI and NestJS —
+declarative routes, accumulating validation, scoped auth middleware — built on
+Axum and Tokio with compile-time guarantees throughout.
 
-FastAPI in Python, and NestJS in JS/TS, make it easy to spin up a REST API. There are plenty of good reasons in which you might need a REST API defined in Rust, providing access (perhaps internal) to code that is best done in Rust. What I want is a FastAPI-like experience in Rust. This crate attempts to give that, as much as possible. The class-first definition of FastAPI, the dependency-injection features of NestJS. It offers:
+**Status**: Active development. Not yet production-ready.
 
-- **Route Macros** - FastAPI-style endpoint definitions
-- **Dependency Injection** - Type-safe service container
-- **Performance** - Built on Axum + Tokio
-- **Type Safety** - Leverage Rust's type system
-- **Future: Auto OpenAPI** - Documentation that stays in sync (coming soon)
-
-**Status**: Active Development | Not yet production-ready
+---
 
 ## Quick Start
 
 ```rust
-use rust-api::prelude::*;
+use rust_api::prelude::*;
 
-#[derive(Serialize, Deserialize)]
-struct User {
-    id: String,
-    name: String,
+#[get("/health")]
+pub async fn health_check(State(svc): State<Arc<HealthService>>) -> Json<HealthResponse> {
+    Json(svc.health_check())
 }
 
-#[get("/")]
-async fn hello() -> &'static str {
-    "Hello, rust-api!"
-}
-
-#[get("/users/{id}")]
-async fn get_user(Path(id): Path<String>) -> Json<User> {
-    Json(User {
-        id: id.clone(),
-        name: format!("User {}", id)
-    })
-}
+pub struct HealthController;
+mount_handlers!(HealthController, HealthService, [(__health_check_route, health_check)]);
 
 #[tokio::main]
-async fn main() {
-    let app = Router::new()
-        .route(__hello_route, routing::get(hello))
-        .route(__get_user_route, routing::get(get_user));
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = RouterPipeline::new()
+        .mount::<HealthController>(Arc::new(HealthService::new()))
+        .build()?;
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .unwrap();
-
-    axum::serve(listener, app).await.unwrap();
+    RustAPI::new().serve(app).await
 }
 ```
+
+---
 
 ## Features
 
-### ✅ Implemented
+| Feature | Description |
+|---|---|
+| **Kleisli Pipeline** | `RouterPipeline` composes controllers as Kleisli arrows (`>=>`). Each `.mount` applies the arrow via `>>=` internally; errors short-circuit at `build()` — never at runtime. |
+| **Route Macros** | `#[get]`, `#[post]`, `#[put]`, `#[delete]`, `#[patch]` — the HTTP verb is a binding contract enforced at registration. |
+| **Pure Controllers** | Controllers are zero-knowledge marker types. No `axum` imports, no auth logic, no routing infrastructure in handler code. |
+| **Scoped Auth** | `require_bearer(key)` and `guard(header, key)` are Tower layers applied to route groups via `.map()`. |
+| **Conditional Mounting** | `.mount_if(condition, svc)` silently skips. `.mount_guarded(svc, guard)` refuses to start if the guard fails. |
+| **Applicative Validation** | `#[derive(Validatable)]` accumulates all field errors. `ValidatedJson<T>` / `ValidatedQuery<T>` return `422` with every error before the handler runs. |
+| **Smart Constructors** | `#[derive(NewType)]` generates validated value-object newtypes with `Deref`, `Display`, and `Serialize`/`Deserialize`. |
+| **Phantom-typed IDs** | `Id<T>` wraps `Uuid` branded with the entity type. `Id<User>` and `Id<Post>` are distinct compile-time types. |
+| **Repository abstraction** | `Repository<T, Id>` trait with composable `QuerySpec` (filters, ordering, paging). `InMemoryRepository<T, Id>` is the bundled dev-time implementation — swap in a real adapter (sqlx, etc.) without touching services or controllers. |
+| **Prelude** | `use rust_api::prelude::*` — one import. `axum` is never a direct user dependency. |
 
-- **Route Macros**: `#[get]`, `#[post]`, `#[put]`, `#[delete]`, `#[patch]`
-- **DI Container**: Type-safe service registration and resolution
-- **Prelude Module**: One import for everything you need
-- **Examples**: Working hello_world and full-featured examples
+### Roadmap
 
-### Coming Soon
+- **OpenAPI generation** — the pipeline retains path/verb/type metadata at every layer. `RouterPipeline::build_with_openapi()` is the natural next step.
+- **sqlx / postgres adapter** — `Repository<T, Id>` trait is the interface; `InMemoryRepository` is the prototype.
+- **TypeScript SDK generation** — full-stack type safety from Rust types to TS client.
 
-- **`Inject<T>` Extractor**: Automatic dependency injection in handlers
-- **Validation**: `#[derive(Validate)]` with automatic error responses
-- **OpenAPI Generation**: Auto-generated Swagger docs
-- **Request-Scoped Services**: Per-request service instances
-- **Testing Utilities**: Easy integration testing
+---
 
-## Examples
+## Building and Running
 
-Run the examples to see the framework working:
+### Prerequisites
 
-```bash
-# Minimal hello world
-cargo run --example hello_world
+- Rust 1.75+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- Optional: [`just`](https://just.systems) task runner (`cargo install just`)
 
-# Full-featured example
-cargo run --example with_macros
-
-# Demo app with DI
-cargo run
-```
-
-Then test the endpoints:
+### Build
 
 ```bash
-curl http://localhost:3000/
-curl http://localhost:3000/users/42
+git clone https://github.com/Andyrug/rust-api
+cd rust-api
+cargo build
 ```
+
+### Run the example API
+
+```bash
+# Health, echo, and user routes
+cargo run -p basic-api
+
+# With admin routes enabled (protected by bearer token)
+ADMIN_API_KEY=secret cargo run -p basic-api
+
+# With metrics endpoint
+ENABLE_METRICS=1 cargo run -p basic-api
+
+# Everything on
+ADMIN_API_KEY=secret ENABLE_METRICS=1 cargo run -p basic-api
+```
+
+Using `just`:
+
+```bash
+just run        # minimal
+just run-admin  # admin routes
+just run-full   # all features
+```
+
+### Test the endpoints
+
+```bash
+# Health
+curl http://localhost:3000/api/v1/health
+
+# Echo
+curl -X POST http://localhost:3000/api/v1/echo \
+     -H "Content-Type: application/json" \
+     -d '{"message": "hello"}'
+
+# Create user
+curl -X POST http://localhost:3000/api/v1/users \
+     -H "Content-Type: application/json" \
+     -d '{"username": "alice_99", "email": "alice@example.com"}'
+
+# Admin (requires ADMIN_API_KEY=secret at startup)
+curl http://localhost:3000/admin/status \
+     -H "Authorization: Bearer secret"
+```
+
+---
+
+## Tests
+
+```bash
+cargo test --workspace   # or: just test
+```
+
+
+
+For a coverage report (requires [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)):
+
+```bash
+cargo install cargo-llvm-cov
+just cov          # opens HTML report
+just cov-lcov     # LCOV for CI
+```
+
+---
+
+## Docker
+
+A multi-stage Dockerfile is included. The final image contains only the binary.
+
+```bash
+# Build
+docker build -t rust-api .
+
+# Run
+docker run -p 3000:3000 rust-api
+
+# With env vars
+docker run -p 3000:3000 \
+  -e ADMIN_API_KEY=secret \
+  -e ENABLE_METRICS=1 \
+  -e RUST_LOG=debug \
+  rust-api
+```
+
+Port `3000` is exposed. `RUST_LOG` defaults to `info`.
+
+---
 
 ## Architecture
 
 ```
 rust-api/
 ├── crates/
-│   ├── rust-api/           # Main crate (DI, app builder, server, router)
-│   └── rust-api-macros/    # Route macros (#[get], etc.)
+│   ├── rust-api/               # Framework
+│   │   └── src/
+│   │       ├── pipeline.rs     # RouterPipeline — Kleisli composition
+│   │       ├── controller.rs   # Controller trait
+│   │       ├── middleware.rs   # require_bearer, guard
+│   │       ├── validation.rs   # Validatable, ValidatedJson, HandlerResult
+│   │       ├── validators.rs   # email, url, uuid, zip, phone, …
+│   │       ├── repository.rs   # Repository<T,Id>, InMemoryRepository<T,Id>
+│   │       └── id.rs           # Id<T> — phantom-typed UUID
+│   └── rust-api-macros/        # #[get/#[post]/…, #[derive(Validatable)], #[derive(NewType)]
 ├── examples/
-│   ├── hello_world.rs     # Minimal example
-│   ├── with_macros.rs     # Full-featured example
-│   └── basic-api/         # Complete app with controllers and services
-└── Cargo.toml             # Workspace configuration
+│   └── basic-api/              # End-to-end example
+│       └── src/
+│           ├── main.rs         # RouterPipeline composition
+│           ├── controllers/    # Pure handlers + mount_handlers!
+│           ├── services/       # Business logic, no HTTP types
+│           └── models/
+│               ├── domain.rs   # Aggregates, value objects, Id<User>
+│               ├── requests.rs # DTOs with #[derive(Validatable)]
+│               └── responses.rs
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── CompositionalRefactor.md
+├── Dockerfile
+└── justfile
 ```
 
-## Comparison
+### The Pipeline
 
-| Feature         | rust-api    | axum | actix-web | poem | rocket |
-| --------------- | ----------- | ---- | --------- | ---- | ------ |
-| Route Macros    | ✅          | ❌   | ❌        | ❌   | ✅     |
-| Built-in DI     | ✅          | ❌   | ✅        | ❌   | ❌     |
-| Auto OpenAPI    | In Progress | ❌   | ❌        | ✅   | ❌     |
-| FastAPI-like DX | ✅          | ❌   | ❌        | ~    | ~      |
-| Performance     | High        | High | High      | High | High   |
+`RouterPipeline` is a monadic chain over `Result<Router>`. Each step is a
+**`Router<()> → Result<Router<()>>`** Kleisli arrow threaded via `Result::and_then`.
 
-## Documentation
+```rust
+RouterPipeline::new()
+    .group("/api/v1", |g| g
+        .mount::<HealthController>(health_svc)   // Kleisli bind
+        .mount::<EchoController>(echo_svc)
+    )
+    .mount_if::<MetricsController>(config.metrics, metrics_svc)
+    .group("/admin", |g| g
+        .mount_guarded::<AdminController, _>(admin_svc, || guard_check())
+        .map(require_bearer(admin_key))           // auth scoped to /admin only
+    )
+    .build()?
+```
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Complete architectural vision
-- [PROGRESS.md](PROGRESS.md) - Development progress
-- [TODO.md](TODO.md) - Detailed roadmap
-- [examples/](examples/) - Working code examples
+| Method | FP concept | Effect |
+|---|---|---|
+| `.mount::<C>(svc)` | Kleisli composition `>=>` (uses `>>=` internally) | Compose controller's arrow into the pipeline |
+| `.map(f)` | Functor `fmap` | Infallible `Router → Router` transform |
+| `.mount_if(cond, svc)` | Conditional `>=>` | Compose only when condition is true |
+| `.mount_guarded(svc, g)` | Guarded `>=>` | Compose or short-circuit at startup |
+| `.group(prefix, \|g\| …)` | Scoped functor | Sub-pipeline with path prefix |
+| `.layer_all(transforms)` | Catamorphism | Apply a list of `Router → Router` transforms |
+| `.build()` | Interpreter | Unwrap into `Result<Router>` |
 
-## Roadmap
+### Validation
 
-**Phase 1: Core** ✅
+One validation story, applied at every layer:
 
-- [x] DI Container
-- [x] Route Macros
-- [x] Examples
+```
+ValidatedJson<Req>    — accumulates field errors at HTTP edge → 422
+Username::new()       — single-field invariant, smart constructor
+Email::new()          — single-field invariant, smart constructor
+User::validate()      — cross-field aggregate invariant
+repo.save(user)       — only reached when all invariants satisfied
+```
 
-**Phase 2: DX Improvements** (In Progress)
+Handler signatures use `HandlerResult<Json<T>>` — a concrete type alias for
+`std::result::Result<Json<T>, ValidationRejection>`, not `impl IntoResponse`.
+Both branches are compiler-verified and inspectable by future OpenAPI tooling.
 
-- [ ] `Inject<T>` extractor
-- [ ] Better route registration
-- [ ] Macro-generated app builder
-- [ ] Reflection-like definition without actual reflection: define a class that becomes the API
+### Identity
 
-**Phase 3: Validation** (Planned)
+`Id<T>` is a `Uuid` branded with the entity type at compile time:
 
-- [ ] `#[derive(Validate)]`
-- [ ] Automatic validation
-- [ ] Structured error responses
-
-**Phase 4: OpenAPI** (Planned)
-
-- [ ] Schema generation
-- [ ] Swagger UI
-- [ ] ReDoc support
-
-## Why RustAPI?
-
-**Python/FastAPI developers** get Rust performance with familiar patterns.
-
-**TypeScript/NestJS developers** get dependency injection in Rust.
-
-**Rust developers** get FastAPI-level developer experience.
-
-## Contributing
+```rust
+pub struct Id<T> {
+    value: Uuid,
+    _marker: PhantomData<fn() -> T>,  // zero bytes at runtime
+}
+```
 
 This is currently in active development. Contributions welcome!
 
-## License
+---
 
 This project is licensed under either of:
 
@@ -178,9 +265,10 @@ at your option.
 
 ## Inspiration
 
-- **FastAPI** (Python) - Amazing DX, automatic docs
-- **NestJS** (TypeScript) - Dependency injection, modules
-- **Axum** (Rust) - Performance, type safety
+- **FastAPI** (Python) — declarative routes, automatic validation, clean DX
+- **NestJS** (TypeScript) — compositional modules, Guards, Middleware as layers
+- **Axum** (Rust) — ergonomic, type-safe, production-grade HTTP
+- **Giraffe** (F#) — Kleisli HTTP handlers, the fish operator `>=>`
 
 ---
 
